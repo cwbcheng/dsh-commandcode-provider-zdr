@@ -1,12 +1,10 @@
-# dsh-commandcode-provider
+# dsh-commandcode-provider (ZDR fork)
 
 **English** | [简体中文](./README.zh-CN.md)
 
-[![CI](https://github.com/Mars-Sea/dsh-commandcode-provider/actions/workflows/ci.yml/badge.svg)](https://github.com/Mars-Sea/dsh-commandcode-provider/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![npm](https://img.shields.io/badge/npm-@mars--sea%2Fdsh--commandcode--provider-blue.svg)](https://www.npmjs.com/package/@mars-sea/dsh-commandcode-provider)
-
 Unofficial [DeepSeek Harness](https://deepseek-harness.github.io/deepseek-harness/) LLM provider plugin for **Command Code**, ported from [pi-commandcode-provider](https://github.com/patlux/pi-commandcode-provider) (MIT). It registers a `commandcode` model provider whose requests are translated to Command Code's Provider API (`POST /alpha/generate`, reverse-engineered by the pi plugin, `command-code@1.26.0`).
+
+**This fork** (based on upstream `v0.2.1`) adds an official **zero-data-retention (ZDR)** switch (`zdr: true` / `CMD_ZDR=1`) that sends `x-cmd-zdr: 1` on every generate request, with a precise `ZDR_NO_PROVIDERS` error when a model has no ZDR-capable upstream. See [Zero data retention](#zero-data-retention-zdr).
 
 > This is a community integration. You need your own Command Code account and API key or subscription, and Command Code's terms apply. This project is not affiliated with Command Code, Inc.
 
@@ -180,6 +178,34 @@ llm-commandcode:
 
 The composition-entry config (`cordis.patch.yml` / your profile `cordis.patch.yml`) accepts the same keys; a literal `apiKey` there takes precedence over the credential reference.
 
+## Zero data retention (ZDR)
+
+This fork adds an official **zero-data-retention** switch: when enabled, every `/alpha/generate` request carries the `x-cmd-zdr: 1` header — the same opt-in the official Command Code CLI exposes via `CMD_ZDR=1`. It forces zero data retention and no prompt training, and routes **only** through ZDR-capable upstreams: if the selected model has no ZDR-capable upstream the request fails with `422 cmd_zdr_no_providers` (`ZDR_NO_PROVIDERS`) **instead of silently falling back** to a non-ZDR provider.
+
+Enable it in `$DSH_HOME/settings.yaml` (hot-reloaded, no restart):
+
+```yaml
+llm-commandcode:
+  zdr: true
+```
+
+or in your profile's `cordis.patch.yml`:
+
+```yaml
+- id: llm-commandcode
+  name: '@mars-sea/dsh-commandcode-provider'
+  config:
+    zdr: true
+```
+
+or via the same environment variable the official CLI honors (no config file needed):
+
+```bash
+export CMD_ZDR=1
+```
+
+Precedence: `zdr: true` in config, or `CMD_ZDR=1`/`CMD_ZDR=true` in the environment — either turns it on; it defaults to **off** so an existing deployment is unaffected until you opt in.
+
 ## Troubleshooting
 
 - **`Command Code API request to .../alpha/generate failed` and the turn keeps retrying (`重试延迟` / "Retry delay")** — this is a **transport-layer failure**: `fetch()` never received an HTTP response (not a 401/403/429, which would say "API error"). Since dsh's retry policy retries `TRANSPORT` twice with backoff, you'll see retry rows in the UI before the turn finally fails. Since 0.1.8 the failure reason shows the **real root cause** (e.g. `fetch failed: connect ECONNREFUSED`, `ENOTFOUND`, `CERT_HAS_EXPIRED`, `The operation was aborted due to timeout`). Common causes:
@@ -216,6 +242,7 @@ This plugin operates entirely within your dsh profile and your Command Code acco
   - `GET {apiBase}/provider/v1/models` — public model catalog (no key required).
   - `POST {apiBase}/alpha/generate` — the model requests themselves, authenticated with your key.
   - The request body includes the `workingDir` (project path) you configure (defaults to the process cwd), sent as Command Code's `config.workingDir`.
+- **Zero data retention**: with `zdr` enabled (see above), every generate request carries `x-cmd-zdr: 1`, forcing Command Code to keep **no** prompt/output, disable prompt training, and route only through ZDR-capable upstreams. This fork makes the header's presence testable and visible — requests without it (zdr off) fall under Command Code's standard retention policy.
 - **No telemetry**: no analytics, no tracking, no third-party endpoints. The only outbound hosts are the Command Code API (`api.commandcode.ai` by default, configurable via `apiBase`).
 
 ## Disabling / uninstalling

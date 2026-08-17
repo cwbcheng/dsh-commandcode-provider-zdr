@@ -101,6 +101,15 @@ export interface Config {
   requestTimeoutMs?: number
   /** Milliseconds a stream may stall before being treated as a dead connection; defaults to 120s. */
   streamIdleTimeoutMs?: number
+  /**
+   * Zero data retention (ZDR). When true, every `/alpha/generate` request
+   * carries `x-cmd-zdr: 1` — the official opt-in that forces zero data
+   * retention and no prompt training, routing only through ZDR-capable
+   * upstreams (a model with no ZDR-capable upstream fails with 422
+   * `cmd_zdr_no_providers` instead of silently falling back). Defaults to
+   * the `CMD_ZDR=1` environment variable the official CLI honors.
+   */
+  zdr?: boolean
 }
 
 export const Config: z<Config> = z.object({
@@ -111,6 +120,7 @@ export const Config: z<Config> = z.object({
   modelsCachePath: z.string(),
   requestTimeoutMs: z.number().min(1).max(MAX_TIMER_DELAY_MS),
   streamIdleTimeoutMs: z.number().min(1).max(MAX_TIMER_DELAY_MS),
+  zdr: z.boolean(),
 })
 
 /** One resolution's complete request facts: connection plus credential reference. */
@@ -125,6 +135,7 @@ export interface ResolvedCommandCodeOptions extends CommandCodeConnectionOptions
  * each settings snapshot at its first use.
  */
 export function resolveAdapterOptions(config: Config): ResolvedCommandCodeOptions {
+  const envZdr = typeof process !== 'undefined' && process.env ? process.env.CMD_ZDR : undefined
   return {
     apiKeyEnv: credentialRef(config.apiKeyEnv ?? DEFAULT_API_KEY_ENV),
     apiBase: config.apiBase ?? DEFAULT_API_BASE,
@@ -132,6 +143,7 @@ export function resolveAdapterOptions(config: Config): ResolvedCommandCodeOption
     modelsCachePath: config.modelsCachePath ?? DEFAULT_MODELS_CACHE_PATH,
     requestTimeoutMs: config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
     streamIdleTimeoutMs: config.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+    zdr: config.zdr === true || envZdr === '1' || envZdr === 'true',
   }
 }
 

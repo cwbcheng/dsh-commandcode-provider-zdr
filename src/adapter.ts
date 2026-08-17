@@ -694,6 +694,15 @@ export interface CommandCodeConnectionOptions {
   requestTimeoutMs: number
   /** Milliseconds a stream may stall before it is treated as a dead connection (default 120s). */
   streamIdleTimeoutMs: number
+  /**
+   * Zero data retention (ZDR). When true, every `/alpha/generate` request
+   * carries `x-cmd-zdr: 1` — the official opt-in that forces zero data
+   * retention and no prompt training, routing only through ZDR-capable
+   * upstreams (a model with no ZDR-capable upstream fails with 422
+   * `cmd_zdr_no_providers` instead of silently falling back). Defaults to
+   * the `CMD_ZDR=1` environment variable the official CLI honors.
+   */
+  zdr: boolean
 }
 
 /**
@@ -1058,6 +1067,7 @@ export class CommandCodeAdapter<C extends CommandCodeConnectionOptions = Command
           'x-project-slug': projectSlugFromPath(connection.workingDir),
           'x-taste-learning': 'true',
           'x-co-flag': 'false',
+          ...(connection.zdr ? { 'x-cmd-zdr': '1' } : {}),
           ...attributionHeaders(),
         },
         body: JSON.stringify(body),
@@ -1115,6 +1125,18 @@ export class CommandCodeAdapter<C extends CommandCodeConnectionOptions = Command
           + ' key stored for COMMANDCODE_API_KEY (Models page) or the auth file',
           'INVALID_CREDENTIAL',
           { status: 401 },
+        )
+      }
+      if (response.status === 422 && providerCode === 'cmd_zdr_no_providers') {
+        // ZDR is fail-closed: the model has no zero-data-retention upstream.
+        // Surface a precise diagnosis instead of a generic HTTP error so the
+        // user knows the request was blocked BY DESIGN, not by a network fault.
+        throw new LlmError(
+          `Command Code API error 422 (cmd_zdr_no_providers): the model "${options.model}" has no`
+          + ' zero-data-retention upstream while ZDR is enabled. Disable zdr (config or CMD_ZDR)'
+          + ' or pick a different model.',
+          'ZDR_NO_PROVIDERS',
+          { status: 422 },
         )
       }
       throw new LlmError(

@@ -29,6 +29,7 @@ import {
   COMMAND_CODE_CLI_VERSION,
   DEFAULT_API_BASE,
 } from '../src/adapter.ts'
+import { resolveAdapterOptions } from '../src/index.ts'
 import type { CommandCodeAdapterDeps } from '../src/adapter.ts'
 import type { GenerateOptions, Message, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -64,6 +65,7 @@ function makeAdapter(overrides: Partial<CommandCodeAdapterDeps> = {}): CommandCo
       modelsCachePath: '/tmp/cc-models-cache.json',
       requestTimeoutMs: 60_000,
       streamIdleTimeoutMs: 120_000,
+      zdr: false,
     }),
     resolveApiKey: async () => 'user_test_key',
     ...overrides,
@@ -479,6 +481,98 @@ test('stream() maps 429 to RATE_LIMIT', async () => {
     collect(adapter.stream({ provider: 'commandcode', model: 'm', messages: [userMessage('hi')] })),
     (err: unknown) => (err as { code?: string }).code === 'RATE_LIMIT',
   )
+})
+
+// ---------------------------------------------------------------------------
+// ZDR (zero data retention)
+// ---------------------------------------------------------------------------
+
+test('stream() sends x-cmd-zdr: 1 when zdr is enabled', async () => {
+  let capturedHeaders: Record<string, string> | undefined
+  const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    capturedHeaders = init?.headers as Record<string, string>
+    return new Response('data: {"type":"finish","finishReason":"stop"}\n\n', {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })
+  }) as unknown as typeof fetch
+
+  const adapter = makeAdapter({
+    fetchImpl,
+    options: () => ({
+      apiBase: 'https://api.commandcode.ai',
+      workingDir: '/tmp/project',
+      modelsCachePath: '/tmp/cc-models-cache.json',
+      requestTimeoutMs: 60_000,
+      streamIdleTimeoutMs: 120_000,
+      zdr: true,
+    }),
+  })
+  await collect(adapter.stream({ provider: 'commandcode', model: 'deepseek/deepseek-v4-flash', messages: [userMessage('hi')] }))
+
+  assert.ok(capturedHeaders)
+  assert.equal(capturedHeaders['x-cmd-zdr'], '1')
+})
+
+test('stream() omits x-cmd-zdr when zdr is disabled', async () => {
+  let capturedHeaders: Record<string, string> | undefined
+  const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    capturedHeaders = init?.headers as Record<string, string>
+    return new Response('data: {"type":"finish","finishReason":"stop"}\n\n', {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })
+  }) as unknown as typeof fetch
+
+  const adapter = makeAdapter({ fetchImpl }) // makeAdapter defaults zdr: false
+  await collect(adapter.stream({ provider: 'commandcode', model: 'm', messages: [userMessage('hi')] }))
+
+  assert.ok(capturedHeaders)
+  assert.equal(capturedHeaders['x-cmd-zdr'], undefined)
+})
+
+test('stream() maps 422 cmd_zdr_no_providers to ZDR_NO_PROVIDERS', async () => {
+  const adapter = makeAdapter({
+    fetchImpl: fetchReturning(422, JSON.stringify({ error: { code: 'cmd_zdr_no_providers', message: 'no zdr upstream' } })),
+  })
+  await assert.rejects(
+    collect(adapter.stream({ provider: 'commandcode', model: 'm', messages: [userMessage('hi')] })),
+    (err: unknown) => {
+      const e = err as { code?: string; message?: string }
+      return e.code === 'ZDR_NO_PROVIDERS' && /zero-data-retention upstream/.test(e.message ?? '')
+    },
+  )
+})
+
+test('stream() keeps PROVIDER_HTTP_ERROR for other 422 codes', async () => {
+  const adapter = makeAdapter({
+    fetchImpl: fetchReturning(422, JSON.stringify({ error: { code: 'SOMETHING_ELSE', message: 'nope' } })),
+  })
+  await assert.rejects(
+    collect(adapter.stream({ provider: 'commandcode', model: 'm', messages: [userMessage('hi')] })),
+    (err: unknown) => (err as { code?: string }).code === 'PROVIDER_HTTP_ERROR',
+  )
+})
+
+test('resolveAdapterOptions() enables zdr from config, env CMD_ZDR, and defaults to false', () => {
+  const prev = process.env.CMD_ZDR
+  try {
+    delete process.env.CMD_ZDR
+    assert.equal(resolveAdapterOptions({}).zdr, false)
+    assert.equal(resolveAdapterOptions({ zdr: true }).zdr, true)
+    assert.equal(resolveAdapterOptions({ zdr: false }).zdr, false)
+    process.env.CMD_ZDR = '1'
+    assert.equal(resolveAdapterOptions({}).zdr, true)
+    process.env.CMD_ZDR = 'true'
+    assert.equal(resolveAdapterOptions({}).zdr, true)
+    // The environment switch is a global opt-in, matching the official CLI's
+    // CMD_ZDR=1: an explicit config false does not override it (the env is the
+    // stronger signal, and zdr:true in config is the per-deployment override).
+    assert.equal(resolveAdapterOptions({ zdr: true }).zdr, true)
+  } finally {
+    if (prev === undefined) delete process.env.CMD_ZDR
+    else process.env.CMD_ZDR = prev
+  }
 })
 
 test('stream() keeps PROVIDER_HTTP_ERROR for other 4xx/5xx and includes provider code', async () => {
