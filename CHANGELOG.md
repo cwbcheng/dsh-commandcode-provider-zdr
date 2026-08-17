@@ -6,9 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Added
+### Removed
 
-- **ZDR capability markers in the model picker.** With `zdr` enabled, each picker row's description now shows `ZDR` for models with a zero-data-retention upstream and `no ZDR` for models explicitly known to lack one (which would fail with `422 cmd_zdr_no_providers` otherwise) — so the ZDR state is visible in the web UI before any request, not only after a failure. The classification is synced from the official CLI bundle (`command-code/dist/cli.mjs`, the `oR` routing table — the only place it marks `zdr:!0`/`zdr:!1`): `ZDR_CAPABLE_MODELS` = `stepfun/Step-3.5-Flash` (parasail/deepinfra/siliconflow), `google/gemini-3.7-flash` (google-vertex); `NON_ZDR_MODELS` = `tencent/Hy3`, `gpt-5.6-terra`, `gpt-5.6-luna`. Models outside the snapshot stay unlabelled — a stale plugin never guesses. With `zdr` off the descriptions are unchanged. New exports: `ZDR_CAPABLE_MODELS`, `NON_ZDR_MODELS`, `zdrCapability()`, `zdrLabel()`.
+- **Per-model ZDR labels in the model picker** (added in an earlier unreleased commit, reverted before release). A batch probe against the live Provider API (2026-08-17: all 55 catalog ids with `x-cmd-zdr: 1`) returned **zero** `422 cmd_zdr_no_providers` — every model the account's plan could access streamed normally. The `no ZDR` markers derived from the CLI's `oR` routing table were wrong (e.g. `gpt-5.6-luna` is marked `zdr:!1` there yet works fine under ZDR): that table describes OpenRouter upstream *pricing/training* flags, not whether Command Code's own server routes the model through a ZDR upstream. A static client snapshot cannot know the server's routing, so the picker no longer annotates ZDR at all; the `cmd_zdr_no_providers` → `ZDR_NO_PROVIDERS` error mapping stays as a fail-closed safety net.
 
 ## [0.2.1] - 2026-08-16
 
