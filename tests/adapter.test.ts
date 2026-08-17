@@ -345,7 +345,18 @@ test('listModels() annotates catalog models with plan, deal, Image, context', as
   const byId = new Map(models.map((m) => [m.id, m]))
   assert.deepEqual(byId.get('claude-sonnet-5')!.inputModalities, ['text', 'image'])
   assert.equal(byId.get('claude-sonnet-5')!.description, 'Pro · Image · 1M')
-  assert.equal(byId.get('deepseek/deepseek-v4-pro')!.description, 'Go · 75% off · 1M')
+  // The 75% off deal is time-limited: at the pinned timestamp (before its
+  // 2026-08-16T15:59:59.999Z expiry) it shows; it lapses on its own afterwards,
+  // so this assertion must not depend on the wall clock.
+  assert.equal(
+    capabilityDescription('deepseek/deepseek-v4-pro', 1_000_000, Date.parse('2026-08-16T00:00:00Z')),
+    'Go · 75% off · 1M',
+  )
+  assert.equal(
+    capabilityDescription('deepseek/deepseek-v4-pro', 1_000_000, Date.parse('2026-08-16T20:00:00Z')),
+    'Go · 1M',
+  )
+  assert.equal(byId.get('deepseek/deepseek-v4-pro')!.description, 'Go · 1M')
   assert.deepEqual(byId.get('deepseek/deepseek-v4-flash')!.inputModalities, ['text'])
   assert.equal(byId.get('deepseek/deepseek-v4-flash')!.description, 'Go · 1M')
   assert.equal(byId.get('poolside/laguna-s-2.1-free')!.description, 'Go · FREE · 256K')
