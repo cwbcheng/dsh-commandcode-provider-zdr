@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **ZDR capability markers in the model picker.** With `zdr` enabled, each picker row's description now shows `ZDR` for models with a zero-data-retention upstream and `no ZDR` for models explicitly known to lack one (which would fail with `422 cmd_zdr_no_providers` otherwise) — so the ZDR state is visible in the web UI before any request, not only after a failure. The classification is synced from the official CLI bundle (`command-code/dist/cli.mjs`, the `oR` routing table — the only place it marks `zdr:!0`/`zdr:!1`): `ZDR_CAPABLE_MODELS` = `stepfun/Step-3.5-Flash` (parasail/deepinfra/siliconflow), `google/gemini-3.7-flash` (google-vertex); `NON_ZDR_MODELS` = `tencent/Hy3`, `gpt-5.6-terra`, `gpt-5.6-luna`. Models outside the snapshot stay unlabelled — a stale plugin never guesses. With `zdr` off the descriptions are unchanged. New exports: `ZDR_CAPABLE_MODELS`, `NON_ZDR_MODELS`, `zdrCapability()`, `zdrLabel()`.
+
 ## [0.2.1] - 2026-08-16
 
 ### Fixed

@@ -18,6 +18,7 @@ Unofficial [DeepSeek Harness](https://deepseek-harness.github.io/deepseek-harnes
 - **Plan-tier annotation in the model picker**: every Command Code model is tagged with the minimum plan that includes it (`KNOWN_PLANS`, synced from the [official plan pages](https://commandcode.ai/docs/plans/go)) — **Go** (33 models), **GOAT** (+3), **Pro** (+14), or **Provider/Max** (+5: Claude Opus/Fable, Fugu Ultra). The picker's `description` leads with the plan label, e.g. *"Go · 50% off · Image · 1M"*, *"Pro · Image · 1M"*, so you know which plan a model needs before switching — no more 403 `MODEL_NOT_IN_PLAN` surprises. **The list itself is sorted by plan tier** (`compareByPlan()`): Go models first, then GOAT, Pro, Provider/Max, alphabetical within each tier — the models your plan can actually use lead the picker.
 - **Deal and free-model annotations**: active discounts (`75% off`, `50% off`, `98% off`, `99% off`) and the `FREE` badge (Laguna S 2.1) show next to the plan tier (`KNOWN_DEALS`, synced from the [official pricing page](https://commandcode.ai/docs/resources/pricing-limits#deals)). **Expiry-aware**: each deal records its official end date and is hidden the moment it passes — an un-updated plugin never shows a lapsed discount as if it were live (only Gemini 3.7 Flash's 50% off is time-limited, through December 31, 2026; the rest are permanent).
 - **Image + context markers**: the picker shows `Image` for Vision-capable models and the context window in human form (`1M`, `256K`, `262K`); text-only models show neither — plan tier plus context is enough.
+- **ZDR markers when enabled**: with `zdr: true` (or `CMD_ZDR=1`), the picker also annotates each model's ZDR capability — `ZDR` for models on a zero-data-retention upstream (`stepfun/Step-3.5-Flash`, `google/gemini-3.7-flash`), `no ZDR` for models known to lack one (`tencent/Hy3`, `gpt-5.6-terra`, `gpt-5.6-luna`), nothing for unknown models. See [Seeing ZDR in the model picker](#seeing-zdr-in-the-model-picker).
 - **Image input for Vision-capable models**: models the official registry lists with Vision (e.g. `claude-sonnet-5`, `gpt-5.4`, `google/gemini-3.5-flash`, …) accept attached images, resolved through the dsh attachment service and sent in the official Command Code wire format. Text-only models (e.g. `deepseek/deepseek-v4-flash`, `zai-org/GLM-5.3`) refuse images loudly rather than silently dropping them.
 
 ## Getting an API key
@@ -205,6 +206,24 @@ export CMD_ZDR=1
 ```
 
 Precedence: `zdr: true` in config, or `CMD_ZDR=1`/`CMD_ZDR=true` in the environment — either turns it on; it defaults to **off** so an existing deployment is unaffected until you opt in.
+
+### Seeing ZDR in the model picker
+
+With `zdr` enabled, the model picker description annotates every row so you can see ZDR state at a glance, **before** any request is made:
+
+- **`ZDR`** — the model is served through a zero-data-retention upstream (per the official CLI's routing table): `stepfun/Step-3.5-Flash`, `google/gemini-3.7-flash`.
+- **`no ZDR`** — the model is known to have **no** ZDR-capable upstream; with ZDR on it would fail with `422 cmd_zdr_no_providers`: `tencent/Hy3`, `gpt-5.6-terra`, `gpt-5.6-luna`.
+- **(no marker)** — the model's ZDR status is unknown (not in the official snapshot); the plugin never guesses, so a stale snapshot cannot mislabel a model.
+
+Example rows with `zdr: true`:
+
+```
+stepfun/Step-3.5-Flash   Go · ZDR · 256K
+tencent/Hy3              no ZDR · 256K
+claude-sonnet-5          Pro · Image · 1M        (ZDR status unknown — unlabelled)
+```
+
+With `zdr` off, descriptions are unchanged (no ZDR marker at all). The classification lives in `ZDR_CAPABLE_MODELS` / `NON_ZDR_MODELS` in `src/adapter.ts`, synced from `command-code/dist/cli.mjs` (see the dsh-commandcode-upstream skill for the extraction procedure).
 
 ## Troubleshooting
 
