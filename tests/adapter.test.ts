@@ -21,11 +21,15 @@ import {
   KNOWN_THINKING_MODELS,
   KNOWN_PLANS,
   KNOWN_DEALS,
+  ZDR_CAPABLE_MODELS,
+  NON_ZDR_MODELS,
   planLabel,
   dealLabel,
   formatContext,
   capabilityDescription,
   compareByPlan,
+  zdrCapability,
+  zdrLabel,
   COMMAND_CODE_CLI_VERSION,
   DEFAULT_API_BASE,
 } from '../src/adapter.ts'
@@ -922,6 +926,59 @@ test('capabilityDescription() composes plan, deal, Image, context', () => {
   )
   // No plan knowledge -> bare parts only.
   assert.equal(capabilityDescription('some-future-model', undefined), '')
+})
+
+test('zdrCapability() answers true/false/unknown from the official snapshots', () => {
+  // The official CLI bundle (`oR` routing table) marks these two ZDR-capable.
+  assert.equal(zdrCapability('stepfun/Step-3.5-Flash'), true)
+  assert.equal(zdrCapability('google/gemini-3.7-flash'), true)
+  assert.equal(ZDR_CAPABLE_MODELS.has('stepfun/Step-3.5-Flash'), true)
+  assert.equal(ZDR_CAPABLE_MODELS.has('google/gemini-3.7-flash'), true)
+  // These are explicitly marked zdr:!1 (no ZDR upstream).
+  assert.equal(zdrCapability('tencent/Hy3'), false)
+  assert.equal(zdrCapability('gpt-5.6-terra'), false)
+  assert.equal(zdrCapability('gpt-5.6-luna'), false)
+  assert.equal(NON_ZDR_MODELS.has('tencent/Hy3'), true)
+  // Models absent from the snapshot are unknown, NOT false: a stale snapshot
+  // must never claim a model is ZDR-incapable when it might be capable.
+  assert.equal(zdrCapability('deepseek/deepseek-v4-flash'), undefined)
+  assert.equal(zdrCapability('claude-sonnet-5'), undefined)
+  assert.equal(zdrCapability('some-future-model'), undefined)
+})
+
+test('zdrLabel() marks ZDR-capable and known-incapable models, only when enabled', () => {
+  // ZDR off: no marker, regardless of capability.
+  assert.equal(zdrLabel(false, 'stepfun/Step-3.5-Flash'), undefined)
+  assert.equal(zdrLabel(false, 'tencent/Hy3'), undefined)
+  // ZDR on, model on a ZDR upstream: positive marker.
+  assert.equal(zdrLabel(true, 'stepfun/Step-3.5-Flash'), 'ZDR')
+  assert.equal(zdrLabel(true, 'google/gemini-3.7-flash'), 'ZDR')
+  // ZDR on, model known NOT on a ZDR upstream: fail-closed warning.
+  assert.equal(zdrLabel(true, 'tencent/Hy3'), 'no ZDR')
+  assert.equal(zdrLabel(true, 'gpt-5.6-terra'), 'no ZDR')
+  // Unknown capability stays unlabelled (stale snapshot cannot mislead).
+  assert.equal(zdrLabel(true, 'claude-sonnet-5'), undefined)
+  assert.equal(zdrLabel(true, 'some-future-model'), undefined)
+})
+
+test('capabilityDescription() inserts the ZDR marker when enabled', () => {
+  // ZDR off (default): descriptions unchanged.
+  assert.equal(capabilityDescription('stepfun/Step-3.5-Flash', 256_000), 'Go · 256K')
+  assert.equal(capabilityDescription('claude-sonnet-5', 1_000_000), 'Pro · Image · 1M')
+  // ZDR on: capable models carry the marker.
+  assert.equal(
+    capabilityDescription('stepfun/Step-3.5-Flash', 256_000, Date.now(), true),
+    'Go · ZDR · 256K',
+  )
+  // ZDR on: models known to lack a ZDR upstream are flagged before the 422.
+  // (tencent/Hy3 has no plan entry -> no plan part.)
+  assert.equal(
+    capabilityDescription('tencent/Hy3', 256_000, Date.now(), true),
+    'no ZDR · 256K',
+  )
+  // ZDR on: unknown capability stays unlabelled.
+  assert.equal(capabilityDescription('claude-sonnet-5', 1_000_000, Date.now(), true), 'Pro · Image · 1M')
+  assert.equal(capabilityDescription('some-future-model', undefined, Date.now(), true), '')
 })
 
 test('CLI version and API base constants are stable', () => {

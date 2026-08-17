@@ -54,6 +54,8 @@ export {
   KNOWN_THINKING_MODELS,
   KNOWN_PLANS,
   KNOWN_DEALS,
+  ZDR_CAPABLE_MODELS,
+  NON_ZDR_MODELS,
   PLAN_LABELS,
   PLAN_ORDER,
   capabilityDescription,
@@ -63,6 +65,8 @@ export {
   planLabel,
   projectSlugFromPath,
   resolveAuthFileApiKey,
+  zdrCapability,
+  zdrLabel,
 } from './adapter.ts'
 export type { CommandCodeAdapterDeps, CommandCodeConnectionOptions, CommandCodeUsageReport, ResolveAttachments } from './adapter.ts'
 export { applyCommands, commandDefinition } from './commands.ts'

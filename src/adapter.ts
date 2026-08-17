@@ -333,6 +333,44 @@ export const KNOWN_DEALS: Readonly<Record<string, KnownDeal>> = {
   'poolside/laguna-s-2.1-free': { label: 'FREE', free: true },
 }
 
+/**
+ * Models with a zero-data-retention upstream, per the official CLI bundle
+ * (`command-code/dist/cli.mjs`, the `oR` OpenRouter routing table — the only
+ * place the bundle marks `zdr:!0`; see the dsh-commandcode-upstream skill for
+ * the exact extraction procedure).
+ *
+ * With ZDR enabled every `/alpha/generate` carries `x-cmd-zdr: 1`, which the
+ * API answers only from ZDR-capable upstreams; a model outside this set fails
+ * with 422 `cmd_zdr_no_providers`. The picker annotates such models with
+ * `no ZDR` so the failure is visible before the request, not after.
+ *
+ * Models without a known answer are treated as unknown (`undefined`), not
+ * `false`, so a snapshot that falls out of date cannot claim a model is
+ * ZDR-capable when it is not. Note this is about *upstream routing*, not about
+ * the model itself — the same model may also be served through non-ZDR
+ * upstreams when `zdr` is off.
+ */
+export const ZDR_CAPABLE_MODELS: ReadonlySet<string> = new Set([
+  // stepfun/Step-3.5-Flash: parasail, deepinfra, siliconflow (zdr:!0)
+  'stepfun/Step-3.5-Flash',
+  // google/gemini-3.7-flash: google-vertex (zdr:!0)
+  'google/gemini-3.7-flash',
+])
+
+/**
+ * Models the official CLI bundle marks as explicitly NOT served through a
+ * zero-data-retention upstream (`zdr:!1` in the `oR` routing table). Kept
+ * separate from {@link ZDR_CAPABLE_MODELS} so the picker can warn about known
+ * non-ZDR models while staying silent on models whose status is unknown.
+ */
+export const NON_ZDR_MODELS: ReadonlySet<string> = new Set([
+  // tencent/Hy3: novita (zdr:!1)
+  'tencent/Hy3',
+  // gpt-5.6-terra / gpt-5.6-luna: openai (zdr:!1)
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
+])
+
 export const COMMAND_CODE_CLI_VERSION = '1.26.0'
 export const DEFAULT_API_BASE = 'https://api.commandcode.ai'
 export const DEFAULT_GENERATE_MAX_TOKENS = 64_000
@@ -376,6 +414,31 @@ export function dealLabel(modelId: string, now: number = Date.now()): string | u
 }
 
 /**
+ * Whether a model id is served through a zero-data-retention upstream:
+ * `true` / `false` for models the official CLI bundle classifies (its `oR`
+ * routing table), `undefined` for models outside the snapshot (e.g. future
+ * catalog additions).
+ */
+export function zdrCapability(modelId: string): boolean | undefined {
+  if (ZDR_CAPABLE_MODELS.has(modelId)) return true
+  if (NON_ZDR_MODELS.has(modelId)) return false
+  return undefined
+}
+
+/**
+ * The picker label for a model under ZDR: `ZDR` when the model is (known)
+ * ZDR-capable, `no ZDR` when it is known not to be (its request would fail
+ * with 422 `cmd_zdr_no_providers`), and undefined for models whose capability
+ * is unknown. Unknown models stay unlabelled so a stale snapshot cannot claim
+ * a model is ZDR-capable when it is not.
+ */
+export function zdrLabel(zdr: boolean, modelId: string): string | undefined {
+  if (!zdr) return undefined
+  if (ZDR_CAPABLE_MODELS.has(modelId)) return 'ZDR'
+  return zdrCapability(modelId) === false ? 'no ZDR' : undefined
+}
+
+/**
  * Compact human-readable context window, e.g. `1_000_000 -> "1M"`,
  * `256_000 -> "256K"`, `262_144 -> "256K"` (floor to the nearest K).
  * Returns undefined for unknown/absent sizes.
@@ -396,20 +459,24 @@ export function formatContext(contextWindow: number | undefined): string | undef
 
 /**
  * Compact one-line summary for the model picker: plan tier, then any active
- * deal (discount or FREE), then `Image` for Vision-capable models, then the
- * context window. Text-only models simply omit the Image marker — "Text only"
- * adds nothing the picker needs to show.
+ * deal (discount or FREE), then `ZDR`/`no ZDR` when ZDR is enabled, then
+ * `Image` for Vision-capable models, then the context window. Text-only models
+ * simply omit the Image marker — "Text only" adds nothing the picker needs to
+ * show.
  */
 export function capabilityDescription(
   modelId: string,
   contextWindow?: number,
   now: number = Date.now(),
+  zdr?: boolean,
 ): string {
   const parts: string[] = []
   const plan = planLabel(modelId)
   if (plan !== undefined) parts.push(plan)
   const deal = dealLabel(modelId, now)
   if (deal !== undefined) parts.push(deal)
+  const zdrMark = zdrLabel(zdr ?? false, modelId)
+  if (zdrMark !== undefined) parts.push(zdrMark)
   if (KNOWN_IMAGE_MODELS.has(modelId)) parts.push('Image')
   const ctx = formatContext(contextWindow)
   if (ctx !== undefined) parts.push(ctx)
@@ -813,6 +880,7 @@ export class CommandCodeAdapter<C extends CommandCodeConnectionOptions = Command
 
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     const catalog = await this.loadCatalog()
+    const zdr = this.deps.options().zdr
     return catalog
       .map((model) => {
         const vision = KNOWN_IMAGE_MODELS.has(model.id)
@@ -821,8 +889,9 @@ export class CommandCodeAdapter<C extends CommandCodeConnectionOptions = Command
           id: model.id,
           name: `${model.name} (CC)`,
           // The picker renders `description` under the model name: plan tier,
-          // active deal, Image marker for Vision models, and context window.
-          description: capabilityDescription(model.id, model.contextWindow),
+          // active deal, ZDR marker (when enabled), Image marker for Vision
+          // models, and context window.
+          description: capabilityDescription(model.id, model.contextWindow, Date.now(), zdr),
           inputModalities: vision ? (['text', 'image'] as const) : (['text'] as const),
         }
       })
@@ -843,11 +912,12 @@ export class CommandCodeAdapter<C extends CommandCodeConnectionOptions = Command
 
     const efforts = KNOWN_EFFORTS[model]
     const vision = KNOWN_IMAGE_MODELS.has(model)
+    const zdr = this.deps.options().zdr
     return {
       provider,
       id: model,
       name: entry ? `${entry.name} (CC)` : model,
-      description: capabilityDescription(model, entry?.contextWindow),
+      description: capabilityDescription(model, entry?.contextWindow, Date.now(), zdr),
       inputModalities: vision ? (['text', 'image'] as const) : (['text'] as const),
       ...(entry
         ? {
